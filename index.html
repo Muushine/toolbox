@@ -7,9 +7,69 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: system-ui, 'Segoe UI', 'Roboto', 'Helvetica Neue', sans-serif; }
         body { background: #f1f5f9; min-height: 100vh; overflow-x: hidden; }
-        .app-layout { display: flex; min-height: 100vh; }
-        .sidebar { width: 320px; background: white; border-right: 1px solid #e2e8f0; display: flex; flex-direction: column; transition: transform 0.25s ease; z-index: 20; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
-        .sidebar.collapsed { transform: translateX(-100%); position: fixed; width: 320px; }
+        .app-layout { display: flex; min-height: 100vh; position: relative; }
+        .sidebar-wrapper {
+            position: relative;
+            flex-shrink: 0;
+            transition: width 0.2s ease;
+            width: 0px;
+            overflow: hidden;
+        }
+        .sidebar-wrapper.visible {
+            width: 320px;
+            overflow: visible;
+        }
+        .sidebar {
+            width: 320px;
+            height: 100vh;
+            background: white;
+            border-right: 1px solid #e2e8f0;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            position: sticky;
+            top: 0;
+            padding-bottom: 1rem;
+        }
+        .resize-handle {
+            position: absolute;
+            right: -6px;
+            top: 0;
+            width: 14px;
+            height: 100%;
+            cursor: col-resize;
+            z-index: 30;
+            background: transparent;
+            transition: background 0.2s;
+            display: none;
+        }
+        .sidebar-wrapper.visible .resize-handle {
+            display: block;
+        }
+        .resize-handle:hover,
+        .resize-handle.active {
+            background: rgba(37, 99, 235, 0.15);
+            border-right: 2px solid #2563eb;
+        }
+        .resize-handle::after {
+            content: '';
+            position: absolute;
+            right: 3px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 4px;
+            height: 40px;
+            background: #94a3b8;
+            border-radius: 4px;
+            opacity: 0.3;
+            transition: opacity 0.2s;
+        }
+        .resize-handle:hover::after,
+        .resize-handle.active::after {
+            opacity: 0.8;
+            background: #2563eb;
+        }
+
         .main-content { flex: 1; padding: 1.5rem 2rem 2rem; min-width: 0; }
         .top-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.8rem; }
         .toggle-sidebar-btn { background: #ffffff; border: 1px solid #cbd5e1; border-radius: 2rem; padding: 0.5rem 1rem; font-size: 0.9rem; font-weight: 500; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
@@ -34,10 +94,10 @@
         .cat-quick-btn { background: white; border: 1px solid #cbd5e1; border-radius: 2rem; padding: 0.3rem 1rem; font-size: 0.8rem; cursor: pointer; }
         .cat-quick-btn.active { background: #2563eb; color: white; border-color: #2563eb; }
         .tools-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 1.2rem; }
-        .tool-card { background: white; border-radius: 1.2rem; padding: 1rem; box-shadow: 0 4px 10px rgba(0,0,0,0.03); border: 1px solid #e9edf2; transition: all 0.2s; cursor: grab; }
+        .tool-card { background: white; border-radius: 1.2rem; padding: 1rem; box-shadow: 0 4px 10px rgba(0,0,0,0.03); border: 1px solid #e9edf2; transition: all 0.2s; cursor: grab; user-select: none; }
         .tool-card:hover { transform: translateY(-2px); border-color: #cbdff2; }
-        .tool-card.dragging { opacity: 0.4; border: 2px dashed #2563eb; }
-        .tool-card.drag-over { border: 2px solid #2563eb; background: #f0f7ff; }
+        .tool-card.dragging { opacity: 0.3; border: 2px dashed #2563eb; transform: scale(0.95); }
+        .tool-card.drag-over { border: 2px solid #2563eb; background: #f0f7ff; transform: scale(1.02); }
         .tool-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
         .tool-cat-badge { background: #eef2ff; font-size: 0.65rem; padding: 0.2rem 0.6rem; border-radius: 20px; color: #1e40af; }
         .tool-actions button { background: none; border: none; cursor: pointer; font-size: 0.9rem; padding: 0 4px; color: #7c8ba0; }
@@ -48,51 +108,52 @@
         footer { margin-top: 2rem; text-align: center; font-size: 0.7rem; color: #94a3b8; }
         .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 1000; }
         .modal-card { background: white; max-width: 400px; width: 90%; border-radius: 1.5rem; padding: 1.5rem; }
-        @media (max-width: 700px) { .main-content { padding: 1rem; } .sidebar { width: 280px; } }
-        /* 工具拖拽把手 */
+        @media (max-width: 700px) { .main-content { padding: 1rem; } .sidebar-wrapper.visible { width: 280px !important; } .resize-handle { display: none !important; } }
         .drag-tool-handle { font-size: 1.2rem; color: #94a3b8; cursor: grab; margin-right: 4px; user-select: none; }
     </style>
 </head>
 <body>
 <div class="app-layout">
-    <aside class="sidebar" id="sidebar">
-        <div class="section-card" style="margin-top:1rem;">
-            <div class="section-title">🔗 添加网址工具</div>
-            <div class="form-group"><label>名称</label><input type="text" id="linkName" placeholder="例如: 在线音频剪辑"></div>
-            <div class="form-group"><label>链接</label><input type="url" id="linkUrl" placeholder="https://..."></div>
-            <div class="form-group"><label>分类</label><select id="linkCategorySelect"></select></div>
-            <div class="form-group"><label>描述</label><input type="text" id="linkDesc" placeholder="简短描述"></div>
-            <button class="btn-sm" id="addLinkBtn">➕ 增添链接</button>
-        </div>
-        <div class="section-card">
-            <div class="section-title">📁 上传HTML工具</div>
-            <div class="form-group"><label>工具名称</label><input type="text" id="htmlToolName" placeholder="HTML工具名称"></div>
-            <div class="form-group"><label>分类</label><select id="htmlCategorySelect"></select></div>
-            <div class="form-group"><label>描述</label><input type="text" id="htmlDesc" placeholder="功能简介"></div>
-            <div class="file-zone-sm" id="fileDropZone">📂 点击或拖拽 .html 文件</div>
-            <input type="file" id="htmlFileInput" accept=".html,.htm" style="display:none;">
-            <button class="btn-sm btn-outline-sm" id="uploadHtmlBtn" style="margin-top: 8px;">✨ 上传保存</button>
-        </div>
-        <div class="section-card">
-            <div class="section-title">🏷️ 分类管理 (拖拽排序·单击名字编辑)</div>
-            <div class="add-cat-row">
-                <input type="text" id="newCatName" placeholder="新分类名称" style="flex:1; padding:0.4rem; border-radius: 1rem; border:1px solid #cbd5e1;">
-                <button id="addCategoryBtn" class="btn-sm" style="width: auto; padding: 0 12px;">➕</button>
+    <div class="sidebar-wrapper" id="sidebarWrapper">
+        <aside class="sidebar" id="sidebar">
+            <div class="section-card" style="margin-top:1rem;">
+                <div class="section-title">🔗 添加网址工具</div>
+                <div class="form-group"><label>名称</label><input type="text" id="linkName" placeholder="例如: 在线音频剪辑"></div>
+                <div class="form-group"><label>链接</label><input type="url" id="linkUrl" placeholder="https://..."></div>
+                <div class="form-group"><label>分类</label><select id="linkCategorySelect"></select></div>
+                <div class="form-group"><label>描述</label><input type="text" id="linkDesc" placeholder="简短描述"></div>
+                <button class="btn-sm" id="addLinkBtn">➕ 增添链接</button>
             </div>
-            <div class="sortable-cat-list" id="sortableCatList"></div>
-            <div class="cat-help-text" style="font-size:0.65rem; margin-top:6px;">💡 拖拽⋮⋮排序 | 单击分类名直接修改</div>
-        </div>
-        <div style="padding: 0 1rem 1.2rem;">
-            <button id="exportDataBtn" class="btn-sm btn-outline-sm" style="margin-bottom: 6px;">📎 导出备份</button>
-            <label for="importFile" class="btn-sm btn-outline-sm" style="display: block; text-align: center; cursor: pointer;">📂 导入数据</label>
-            <input type="file" id="importFile" accept=".json" style="display:none;">
-            <button id="closeSidebarBtn" class="btn-sm btn-outline-sm" style="margin-top: 10px;">✖ 收起侧栏</button>
-        </div>
-    </aside>
+            <div class="section-card">
+                <div class="section-title">📁 上传HTML工具</div>
+                <div class="form-group"><label>工具名称</label><input type="text" id="htmlToolName" placeholder="HTML工具名称"></div>
+                <div class="form-group"><label>分类</label><select id="htmlCategorySelect"></select></div>
+                <div class="form-group"><label>描述</label><input type="text" id="htmlDesc" placeholder="功能简介"></div>
+                <div class="file-zone-sm" id="fileDropZone">📂 点击或拖拽 .html 文件</div>
+                <input type="file" id="htmlFileInput" accept=".html,.htm" style="display:none;">
+                <button class="btn-sm btn-outline-sm" id="uploadHtmlBtn" style="margin-top: 8px;">✨ 上传保存</button>
+            </div>
+            <div class="section-card">
+                <div class="section-title">🏷️ 分类管理 (拖拽排序·单击名字编辑)</div>
+                <div class="add-cat-row">
+                    <input type="text" id="newCatName" placeholder="新分类名称" style="flex:1; padding:0.4rem; border-radius: 1rem; border:1px solid #cbd5e1;">
+                    <button id="addCategoryBtn" class="btn-sm" style="width: auto; padding: 0 12px;">➕</button>
+                </div>
+                <div class="sortable-cat-list" id="sortableCatList"></div>
+                <div class="cat-help-text" style="font-size:0.65rem; margin-top:6px;">💡 拖拽⋮⋮排序 | 单击分类名直接修改</div>
+            </div>
+            <div style="padding: 0 1rem 1.2rem;">
+                <button id="exportDataBtn" class="btn-sm btn-outline-sm" style="margin-bottom: 6px;">📎 导出备份</button>
+                <label for="importFile" class="btn-sm btn-outline-sm" style="display: block; text-align: center; cursor: pointer;">📂 导入数据</label>
+                <input type="file" id="importFile" accept=".json" style="display:none;">
+            </div>
+        </aside>
+        <div class="resize-handle" id="resizeHandle"></div>
+    </div>
 
     <main class="main-content">
         <div class="top-bar">
-            <button class="toggle-sidebar-btn" id="openSidebarBtn">☰ 展开侧栏 · 添加工具</button>
+            <button class="toggle-sidebar-btn" id="toggleSidebarBtn">☰ 展开侧栏</button>
             <div class="hero-title">🧰 全能工具箱 · 海量免费资源 <span id="toolCountBadge" class="badge-count">0</span></div>
             <button id="resetAllCategoryBtn" class="toggle-sidebar-btn" style="padding: 0.4rem 1rem;">📌 全部工具</button>
         </div>
@@ -119,14 +180,107 @@
 <script>
     const STORAGE_KEY = 'toolbox_ultimate_v9';
     const CAT_ORDER_KEY = 'toolbox_cat_order_v4';
-    const TOOL_ORDER_KEY = 'toolbox_tool_order_v1'; // 新增工具顺序存储
+    const TOOL_ORDER_KEY = 'toolbox_tool_order_v1';
+    const SIDEBAR_WIDTH_KEY = 'toolbox_sidebar_width';
+
     let tools = [];
     let currentCategory = 'all';
     let editingId = null;
     const BASE_CATEGORIES = ['开发工具','设计神器','文档处理','在线转换','实用查询','AI助手','图片工具','视频工具','音频工具','其他'];
     let customCategories = [];
     let categoryOrder = [];
-    let toolOrder = []; // 存储工具ID顺序
+    let toolOrder = [];
+
+    // ----- 侧边栏宽度控制 -----
+    function loadSidebarWidth() {
+        const stored = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+        if (stored) {
+            const w = parseInt(stored, 10);
+            if (w > 200 && w < 600) return w;
+        }
+        return 320;
+    }
+    function saveSidebarWidth(w) {
+        localStorage.setItem(SIDEBAR_WIDTH_KEY, String(w));
+    }
+
+    // ----- 拖拽调整宽度 -----
+    let isResizing = false;
+    let startX = 0;
+    let startWidth = 0;
+
+    function initResize() {
+        const handle = document.getElementById('resizeHandle');
+        const wrapper = document.getElementById('sidebarWrapper');
+        if (!handle || !wrapper) return;
+
+        handle.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            isResizing = true;
+            startX = e.clientX;
+            startWidth = wrapper.offsetWidth || 320;
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+            handle.classList.add('active');
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+            const delta = e.clientX - startX;
+            let newWidth = startWidth + delta;
+            newWidth = Math.min(600, Math.max(220, newWidth));
+            wrapper.style.width = newWidth + 'px';
+            saveSidebarWidth(newWidth);
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isResizing) {
+                isResizing = false;
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+                const handleEl = document.getElementById('resizeHandle');
+                if (handleEl) handleEl.classList.remove('active');
+                const wrapperEl = document.getElementById('sidebarWrapper');
+                if (wrapperEl) {
+                    saveSidebarWidth(wrapperEl.offsetWidth);
+                }
+            }
+        });
+
+        handle.addEventListener('touchstart', (e) => {
+            const touch = e.touches[0];
+            if (!touch) return;
+            isResizing = true;
+            startX = touch.clientX;
+            startWidth = wrapper.offsetWidth || 320;
+            handle.classList.add('active');
+            e.preventDefault();
+        }, { passive: false });
+
+        document.addEventListener('touchmove', (e) => {
+            if (!isResizing) return;
+            const touch = e.touches[0];
+            if (!touch) return;
+            const delta = touch.clientX - startX;
+            let newWidth = startWidth + delta;
+            newWidth = Math.min(600, Math.max(220, newWidth));
+            wrapper.style.width = newWidth + 'px';
+            saveSidebarWidth(newWidth);
+            e.preventDefault();
+        }, { passive: false });
+
+        document.addEventListener('touchend', () => {
+            if (isResizing) {
+                isResizing = false;
+                const handleEl = document.getElementById('resizeHandle');
+                if (handleEl) handleEl.classList.remove('active');
+                const wrapperEl = document.getElementById('sidebarWrapper');
+                if (wrapperEl) {
+                    saveSidebarWidth(wrapperEl.offsetWidth);
+                }
+            }
+        });
+    }
 
     // ----- 工具排序相关 -----
     function loadToolOrder() {
@@ -140,7 +294,6 @@
     function saveToolOrder() {
         localStorage.setItem(TOOL_ORDER_KEY, JSON.stringify(toolOrder));
     }
-    // 将工具按照toolOrder排序，未包含的追加到末尾
     function getOrderedTools(toolsArray) {
         if (!toolOrder || toolOrder.length === 0) return toolsArray;
         const ordered = [];
@@ -153,45 +306,13 @@
                 delete toolMap[id];
             }
         });
-        // 剩余的工具（新添加的或未排序的）追加到末尾
         for (const id in toolMap) {
             remaining.push(toolMap[id]);
         }
         return ordered.concat(remaining);
     }
-    // 更新排序存储 (基于当前筛选后的顺序)
-    function updateToolOrderFromUI() {
-        const grid = document.getElementById('toolsGrid');
-        if (!grid) return;
-        const cards = grid.querySelectorAll('.tool-card');
-        const newOrder = [];
-        cards.forEach(card => {
-            const id = card.dataset.toolId;
-            if (id) newOrder.push(id);
-        });
-        // 合并所有工具（包括当前未显示的），保持已有顺序，新增的追加
-        const allIds = tools.map(t => t.id);
-        const existingOrder = toolOrder.filter(id => allIds.includes(id));
-        const newIds = allIds.filter(id => !existingOrder.includes(id));
-        // 保留newOrder中的顺序，但仅包含当前显示的工具，其他工具保持原有顺序
-        const currentVisibleIds = newOrder;
-        const finalOrder = [];
-        // 先加入当前可见工具的顺序
-        currentVisibleIds.forEach(id => {
-            if (allIds.includes(id) && !finalOrder.includes(id)) finalOrder.push(id);
-        });
-        // 再加入其他未被包含的工具（保持原有顺序）
-        existingOrder.forEach(id => {
-            if (allIds.includes(id) && !finalOrder.includes(id)) finalOrder.push(id);
-        });
-        newIds.forEach(id => {
-            if (allIds.includes(id) && !finalOrder.includes(id)) finalOrder.push(id);
-        });
-        toolOrder = finalOrder;
-        saveToolOrder();
-    }
 
-    // 分类排序相关
+    // ----- 分类排序相关 -----
     function loadCategoryOrder() {
         const stored = localStorage.getItem(CAT_ORDER_KEY);
         if (stored) { try { categoryOrder = JSON.parse(stored); if (!Array.isArray(categoryOrder)) categoryOrder = [...BASE_CATEGORIES]; } catch(e) { categoryOrder = [...BASE_CATEGORIES]; } } 
@@ -298,7 +419,7 @@
         items.forEach(item => { item.setAttribute('draggable','true'); item.addEventListener('dragstart',handleDragStart); item.addEventListener('dragover',handleDragOver); item.addEventListener('drop',handleDrop); item.addEventListener('dragend',handleDragEnd); });
     }
     
-    // ===================== 海量免费工具 =====================
+    // ===================== 内置工具 =====================
     const builtInTools = [
         { name: 'JSON.cn 格式化', type: 'link', url: 'https://www.json.cn/', category: '开发工具', description: 'JSON解析/格式化/校验' },
         { name: 'RegEx101 正则', type: 'link', url: 'https://regex101.com/', category: '开发工具', description: '正则表达式测试+解释' },
@@ -400,7 +521,6 @@
         const toStore = tools.map(t => t.type === 'html' && t.blobContent ? { ...t, blobContent: t.blobContent } : t);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
         document.getElementById('toolCountBadge').innerText = tools.length;
-        // 同时更新toolOrder
         const allIds = tools.map(t => t.id);
         toolOrder = toolOrder.filter(id => allIds.includes(id));
         const newIds = allIds.filter(id => !toolOrder.includes(id));
@@ -413,7 +533,6 @@
         if (!finalUrl.startsWith('http://') && !finalUrl.startsWith('https://')) finalUrl = 'https://' + finalUrl;
         const newTool = { id: Date.now()+'-'+Math.random().toString(36).substr(2,6), name: name.trim(), type: 'link', url: finalUrl, category, description: desc.trim() || '点击访问', createdAt: Date.now() };
         tools.unshift(newTool);
-        // 更新排序
         toolOrder = [newTool.id, ...toolOrder];
         saveToolOrder();
         saveTools(); renderAllUI(); return true;
@@ -464,7 +583,6 @@
             `;
             grid.appendChild(card);
         });
-        // 事件绑定
         document.querySelectorAll('.del-tool').forEach(btn => btn.addEventListener('click', (e) => deleteTool(btn.getAttribute('data-id'))));
         document.querySelectorAll('.edit-tool').forEach(btn => btn.addEventListener('click', (e) => openEditModal(btn.getAttribute('data-id'))));
         document.querySelectorAll('.copy-action').forEach(btn => {
@@ -478,64 +596,93 @@
             });
         });
 
-        // ----- 工具卡片拖拽排序 -----
+        // ----- 工具卡片拖拽排序 (修复版) -----
         let dragSrcElement = null;
+        let dragSrcId = null;
+
         const cards = grid.querySelectorAll('.tool-card');
+
         const handleDragStart = (e) => {
             const el = e.target.closest('.tool-card');
             if (!el) return;
             dragSrcElement = el;
+            dragSrcId = el.dataset.toolId;
             el.classList.add('dragging');
             e.dataTransfer.effectAllowed = 'move';
-            e.dataTransfer.setData('text/plain', el.dataset.toolId);
+            e.dataTransfer.setData('text/plain', dragSrcId);
+            // 延迟设置拖拽图像，避免卡顿
+            setTimeout(() => {
+                if (el) el.style.opacity = '0.4';
+            }, 0);
         };
+
         const handleDragOver = (e) => {
             e.preventDefault();
             e.dataTransfer.dropEffect = 'move';
             const target = e.target.closest('.tool-card');
-            if (target && target !== dragSrcElement) {
+            if (target && target !== dragSrcElement && !target.classList.contains('dragging')) {
+                // 清除其他高亮
+                document.querySelectorAll('.tool-card.drag-over').forEach(c => c.classList.remove('drag-over'));
                 target.classList.add('drag-over');
             }
         };
+
         const handleDragLeave = (e) => {
             const target = e.target.closest('.tool-card');
-            if (target) target.classList.remove('drag-over');
+            if (target) {
+                target.classList.remove('drag-over');
+            }
         };
+
         const handleDrop = (e) => {
             e.preventDefault();
             const target = e.target.closest('.tool-card');
-            if (!target || !dragSrcElement || target === dragSrcElement) {
-                if (target) target.classList.remove('drag-over');
+            if (!target) return;
+            target.classList.remove('drag-over');
+
+            const dropId = target.dataset.toolId;
+            if (!dragSrcId || !dropId || dragSrcId === dropId) {
+                cleanupDrag();
                 return;
             }
-            target.classList.remove('drag-over');
-            const dragId = dragSrcElement.dataset.toolId;
-            const dropId = target.dataset.toolId;
-            if (!dragId || !dropId) return;
-            // 重新排序 toolOrder
-            const dragIndex = toolOrder.indexOf(dragId);
+
+            // 执行排序：从 toolOrder 中移动
+            const dragIndex = toolOrder.indexOf(dragSrcId);
             const dropIndex = toolOrder.indexOf(dropId);
-            if (dragIndex === -1 || dropIndex === -1) return;
+            if (dragIndex === -1 || dropIndex === -1) {
+                cleanupDrag();
+                return;
+            }
+
+            // 移除拖拽元素
             toolOrder.splice(dragIndex, 1);
+            // 计算新的插入位置 (因为移除后索引变化)
             const newDropIndex = toolOrder.indexOf(dropId);
             if (newDropIndex === -1) {
-                toolOrder.push(dragId);
+                toolOrder.push(dragSrcId);
             } else {
-                toolOrder.splice(newDropIndex, 0, dragId);
+                toolOrder.splice(newDropIndex, 0, dragSrcId);
             }
+
             saveToolOrder();
+            cleanupDrag();
             renderAllUI(); // 重新渲染
-            dragSrcElement = null;
         };
+
         const handleDragEnd = (e) => {
-            const el = e.target.closest('.tool-card');
-            if (el) {
-                el.classList.remove('dragging');
-                el.classList.remove('drag-over');
+            cleanupDrag();
+        };
+
+        const cleanupDrag = () => {
+            if (dragSrcElement) {
+                dragSrcElement.classList.remove('dragging');
+                dragSrcElement.style.opacity = '';
             }
             document.querySelectorAll('.tool-card.drag-over').forEach(c => c.classList.remove('drag-over'));
             dragSrcElement = null;
+            dragSrcId = null;
         };
+
         cards.forEach(card => {
             card.addEventListener('dragstart', handleDragStart);
             card.addEventListener('dragover', handleDragOver);
@@ -544,10 +691,17 @@
             card.addEventListener('dragend', handleDragEnd);
         });
     }
+
     function renderQuickCats() {
         const sorted = getSortedCategoryList();
         const bar = document.getElementById('quickCatsBar');
-        bar.innerHTML = `<button class="cat-quick-btn ${currentCategory === 'all' ? 'active' : ''}" data-cat="all">📌 全部</button>`;
+        bar.innerHTML = '';
+        const allBtn = document.createElement('button');
+        allBtn.className = `cat-quick-btn ${currentCategory === 'all' ? 'active' : ''}`;
+        allBtn.textContent = '📌 全部';
+        allBtn.onclick = () => { currentCategory = 'all'; renderAllUI(); };
+        bar.appendChild(allBtn);
+
         sorted.forEach(cat => {
             const btn = document.createElement('button');
             btn.className = `cat-quick-btn ${currentCategory === cat ? 'active' : ''}`;
@@ -592,10 +746,48 @@
         closeModal();
     });
     
+    // ----- 侧边栏展开/收起 -----
     const sidebar = document.getElementById('sidebar');
-    document.getElementById('openSidebarBtn').onclick = () => sidebar.classList.remove('collapsed');
-    document.getElementById('closeSidebarBtn').onclick = () => sidebar.classList.add('collapsed');
-    if (window.innerWidth <= 700) sidebar.classList.add('collapsed');
+    const sidebarWrapper = document.getElementById('sidebarWrapper');
+    const toggleBtn = document.getElementById('toggleSidebarBtn');
+    let isSidebarVisible = false;
+
+    function updateToggleButton() {
+        toggleBtn.innerHTML = isSidebarVisible ? '☰ 收起侧栏' : '☰ 展开侧栏';
+    }
+
+    function showSidebar() {
+        isSidebarVisible = true;
+        sidebarWrapper.classList.add('visible');
+        const w = loadSidebarWidth();
+        sidebarWrapper.style.width = w + 'px';
+        updateToggleButton();
+    }
+
+    function hideSidebar() {
+        isSidebarVisible = false;
+        sidebarWrapper.classList.remove('visible');
+        sidebarWrapper.style.width = '0px';
+        updateToggleButton();
+    }
+
+    toggleBtn.onclick = () => {
+        if (isSidebarVisible) {
+            hideSidebar();
+        } else {
+            showSidebar();
+        }
+    };
+
+    hideSidebar();
+
+    window.addEventListener('resize', () => {
+        if (window.innerWidth <= 700 && isSidebarVisible) {
+            hideSidebar();
+        }
+    });
+
+    // ----- 事件绑定 -----
     document.getElementById('addCategoryBtn').onclick = () => { const val = document.getElementById('newCatName').value.trim(); if(val && addCustomCategory(val)) document.getElementById('newCatName').value = ''; else alert('分类名无效或已存在'); };
     document.getElementById('addLinkBtn').onclick = () => { const n=document.getElementById('linkName').value, u=document.getElementById('linkUrl').value, c=document.getElementById('linkCategorySelect').value, d=document.getElementById('linkDesc').value; if(addLinkTool(n,u,c,d)){ document.getElementById('linkName').value=''; document.getElementById('linkUrl').value=''; document.getElementById('linkDesc').value=''; } };
     const fileZone=document.getElementById('fileDropZone'), fileInput=document.getElementById('htmlFileInput');
@@ -609,16 +801,18 @@
     document.getElementById('importFile').onchange=e=>{ const file=e.target.files[0]; if(!file)return; const reader=new FileReader(); reader.onload=ev=>{ try{ const imp=JSON.parse(ev.target.result); if(imp.tools){ tools=imp.tools; if(imp.categoryOrder) categoryOrder=imp.categoryOrder; if(imp.customCategories) customCategories=imp.customCategories; if(imp.toolOrder) toolOrder=imp.toolOrder; else toolOrder=[]; saveCategoryOrder(); saveCustomToLocal(); saveToolOrder(); saveTools(); renderAllUI(); alert('导入成功'); } else alert('格式错误'); } catch(e){ alert('解析失败'); } }; reader.readAsText(file); e.target.value=''; };
     document.getElementById('resetAllCategoryBtn').onclick=()=>{ currentCategory='all'; renderAllUI(); };
     function escapeHtml(str){ if(!str) return ''; return str.replace(/[&<>]/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m])); }
+
+    // ----- 初始化 -----
     loadCustomCategories(); 
     loadToolOrder(); 
     initTools(); 
-    // 确保toolOrder包含所有工具
     const allIds = tools.map(t => t.id);
     toolOrder = toolOrder.filter(id => allIds.includes(id));
     const newIds = allIds.filter(id => !toolOrder.includes(id));
     toolOrder = toolOrder.concat(newIds);
     saveToolOrder();
     renderAllUI();
+    initResize();
 </script>
 </body>
 </html>
