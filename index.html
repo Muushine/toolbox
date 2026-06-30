@@ -20,7 +20,7 @@
             overflow: visible;
         }
         .sidebar {
-            width: 320px;
+            width: 100%;
             height: 100vh;
             background: white;
             border-right: 1px solid #e2e8f0;
@@ -204,7 +204,7 @@
         localStorage.setItem(SIDEBAR_WIDTH_KEY, String(w));
     }
 
-    // ----- 拖拽调整宽度 -----
+    // ----- 拖拽调整侧边栏宽度 -----
     let isResizing = false;
     let startX = 0;
     let startWidth = 0;
@@ -215,6 +215,8 @@
         if (!handle || !wrapper) return;
 
         handle.addEventListener('mousedown', (e) => {
+            // 只有侧边栏可见时才允许拖拽
+            if (!wrapper.classList.contains('visible')) return;
             e.preventDefault();
             isResizing = true;
             startX = e.clientX;
@@ -228,8 +230,9 @@
             if (!isResizing) return;
             const delta = e.clientX - startX;
             let newWidth = startWidth + delta;
-            newWidth = Math.min(600, Math.max(220, newWidth));
+            newWidth = Math.min(500, Math.max(200, newWidth));
             wrapper.style.width = newWidth + 'px';
+            // 实时保存
             saveSidebarWidth(newWidth);
         });
 
@@ -240,14 +243,17 @@
                 document.body.style.userSelect = '';
                 const handleEl = document.getElementById('resizeHandle');
                 if (handleEl) handleEl.classList.remove('active');
+                // 确保保存最终宽度
                 const wrapperEl = document.getElementById('sidebarWrapper');
-                if (wrapperEl) {
-                    saveSidebarWidth(wrapperEl.offsetWidth);
+                if (wrapperEl && wrapperEl.classList.contains('visible')) {
+                    const w = wrapperEl.offsetWidth;
+                    if (w > 0) saveSidebarWidth(w);
                 }
             }
         });
 
         handle.addEventListener('touchstart', (e) => {
+            if (!wrapper.classList.contains('visible')) return;
             const touch = e.touches[0];
             if (!touch) return;
             isResizing = true;
@@ -263,7 +269,7 @@
             if (!touch) return;
             const delta = touch.clientX - startX;
             let newWidth = startWidth + delta;
-            newWidth = Math.min(600, Math.max(220, newWidth));
+            newWidth = Math.min(500, Math.max(200, newWidth));
             wrapper.style.width = newWidth + 'px';
             saveSidebarWidth(newWidth);
             e.preventDefault();
@@ -275,8 +281,9 @@
                 const handleEl = document.getElementById('resizeHandle');
                 if (handleEl) handleEl.classList.remove('active');
                 const wrapperEl = document.getElementById('sidebarWrapper');
-                if (wrapperEl) {
-                    saveSidebarWidth(wrapperEl.offsetWidth);
+                if (wrapperEl && wrapperEl.classList.contains('visible')) {
+                    const w = wrapperEl.offsetWidth;
+                    if (w > 0) saveSidebarWidth(w);
                 }
             }
         });
