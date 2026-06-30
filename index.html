@@ -34,8 +34,10 @@
         .cat-quick-btn { background: white; border: 1px solid #cbd5e1; border-radius: 2rem; padding: 0.3rem 1rem; font-size: 0.8rem; cursor: pointer; }
         .cat-quick-btn.active { background: #2563eb; color: white; border-color: #2563eb; }
         .tools-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 1.2rem; }
-        .tool-card { background: white; border-radius: 1.2rem; padding: 1rem; box-shadow: 0 4px 10px rgba(0,0,0,0.03); border: 1px solid #e9edf2; transition: all 0.2s; }
+        .tool-card { background: white; border-radius: 1.2rem; padding: 1rem; box-shadow: 0 4px 10px rgba(0,0,0,0.03); border: 1px solid #e9edf2; transition: all 0.2s; cursor: grab; }
         .tool-card:hover { transform: translateY(-2px); border-color: #cbdff2; }
+        .tool-card.dragging { opacity: 0.4; border: 2px dashed #2563eb; }
+        .tool-card.drag-over { border: 2px solid #2563eb; background: #f0f7ff; }
         .tool-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
         .tool-cat-badge { background: #eef2ff; font-size: 0.65rem; padding: 0.2rem 0.6rem; border-radius: 20px; color: #1e40af; }
         .tool-actions button { background: none; border: none; cursor: pointer; font-size: 0.9rem; padding: 0 4px; color: #7c8ba0; }
@@ -47,6 +49,8 @@
         .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 1000; }
         .modal-card { background: white; max-width: 400px; width: 90%; border-radius: 1.5rem; padding: 1.5rem; }
         @media (max-width: 700px) { .main-content { padding: 1rem; } .sidebar { width: 280px; } }
+        /* 工具拖拽把手 */
+        .drag-tool-handle { font-size: 1.2rem; color: #94a3b8; cursor: grab; margin-right: 4px; user-select: none; }
     </style>
 </head>
 <body>
@@ -115,13 +119,79 @@
 <script>
     const STORAGE_KEY = 'toolbox_ultimate_v9';
     const CAT_ORDER_KEY = 'toolbox_cat_order_v4';
+    const TOOL_ORDER_KEY = 'toolbox_tool_order_v1'; // 新增工具顺序存储
     let tools = [];
     let currentCategory = 'all';
     let editingId = null;
     const BASE_CATEGORIES = ['开发工具','设计神器','文档处理','在线转换','实用查询','AI助手','图片工具','视频工具','音频工具','其他'];
     let customCategories = [];
     let categoryOrder = [];
+    let toolOrder = []; // 存储工具ID顺序
 
+    // ----- 工具排序相关 -----
+    function loadToolOrder() {
+        const stored = localStorage.getItem(TOOL_ORDER_KEY);
+        if (stored) {
+            try { toolOrder = JSON.parse(stored); if (!Array.isArray(toolOrder)) toolOrder = []; } catch(e) { toolOrder = []; }
+        } else {
+            toolOrder = [];
+        }
+    }
+    function saveToolOrder() {
+        localStorage.setItem(TOOL_ORDER_KEY, JSON.stringify(toolOrder));
+    }
+    // 将工具按照toolOrder排序，未包含的追加到末尾
+    function getOrderedTools(toolsArray) {
+        if (!toolOrder || toolOrder.length === 0) return toolsArray;
+        const ordered = [];
+        const remaining = [];
+        const toolMap = {};
+        toolsArray.forEach(t => toolMap[t.id] = t);
+        toolOrder.forEach(id => {
+            if (toolMap[id]) {
+                ordered.push(toolMap[id]);
+                delete toolMap[id];
+            }
+        });
+        // 剩余的工具（新添加的或未排序的）追加到末尾
+        for (const id in toolMap) {
+            remaining.push(toolMap[id]);
+        }
+        return ordered.concat(remaining);
+    }
+    // 更新排序存储 (基于当前筛选后的顺序)
+    function updateToolOrderFromUI() {
+        const grid = document.getElementById('toolsGrid');
+        if (!grid) return;
+        const cards = grid.querySelectorAll('.tool-card');
+        const newOrder = [];
+        cards.forEach(card => {
+            const id = card.dataset.toolId;
+            if (id) newOrder.push(id);
+        });
+        // 合并所有工具（包括当前未显示的），保持已有顺序，新增的追加
+        const allIds = tools.map(t => t.id);
+        const existingOrder = toolOrder.filter(id => allIds.includes(id));
+        const newIds = allIds.filter(id => !existingOrder.includes(id));
+        // 保留newOrder中的顺序，但仅包含当前显示的工具，其他工具保持原有顺序
+        const currentVisibleIds = newOrder;
+        const finalOrder = [];
+        // 先加入当前可见工具的顺序
+        currentVisibleIds.forEach(id => {
+            if (allIds.includes(id) && !finalOrder.includes(id)) finalOrder.push(id);
+        });
+        // 再加入其他未被包含的工具（保持原有顺序）
+        existingOrder.forEach(id => {
+            if (allIds.includes(id) && !finalOrder.includes(id)) finalOrder.push(id);
+        });
+        newIds.forEach(id => {
+            if (allIds.includes(id) && !finalOrder.includes(id)) finalOrder.push(id);
+        });
+        toolOrder = finalOrder;
+        saveToolOrder();
+    }
+
+    // 分类排序相关
     function loadCategoryOrder() {
         const stored = localStorage.getItem(CAT_ORDER_KEY);
         if (stored) { try { categoryOrder = JSON.parse(stored); if (!Array.isArray(categoryOrder)) categoryOrder = [...BASE_CATEGORIES]; } catch(e) { categoryOrder = [...BASE_CATEGORIES]; } } 
@@ -228,9 +298,8 @@
         items.forEach(item => { item.setAttribute('draggable','true'); item.addEventListener('dragstart',handleDragStart); item.addEventListener('dragover',handleDragOver); item.addEventListener('drop',handleDrop); item.addEventListener('dragend',handleDragEnd); });
     }
     
-    // ===================== 海量免费工具 (每个分类都大幅增加) =====================
+    // ===================== 海量免费工具 =====================
     const builtInTools = [
-        // 开发工具 (12个)
         { name: 'JSON.cn 格式化', type: 'link', url: 'https://www.json.cn/', category: '开发工具', description: 'JSON解析/格式化/校验' },
         { name: 'RegEx101 正则', type: 'link', url: 'https://regex101.com/', category: '开发工具', description: '正则表达式测试+解释' },
         { name: 'CodePen 前端实验室', type: 'link', url: 'https://codepen.io/pen/', category: '开发工具', description: 'HTML/CSS/JS在线调试' },
@@ -243,7 +312,6 @@
         { name: 'Base64 编码', type: 'link', url: 'https://base64.us/', category: '开发工具', description: 'Base64/图片转换' },
         { name: 'Diff 文本对比', type: 'link', url: 'https://www.diffchecker.com/', category: '开发工具', description: '文本差异比较' },
         { name: '在线Markdown编辑器', type: 'link', url: 'https://pandao.github.io/editor.md/', category: '开发工具', description: '实时预览MD' },
-        // 设计神器 (10个)
         { name: 'Coolors 调色板', type: 'link', url: 'https://coolors.co/', category: '设计神器', description: '快速生成配色方案' },
         { name: 'Remove.bg 抠图', type: 'link', url: 'https://www.remove.bg/zh', category: '设计神器', description: 'AI一键去背景' },
         { name: 'Canva 在线设计', type: 'link', url: 'https://www.canva.com/', category: '设计神器', description: '海报/PPT/社交媒体' },
@@ -254,7 +322,6 @@
         { name: 'UI 阴影生成器', type: 'link', url: 'https://neumorphism.io/', category: '设计神器', description: 'Neumorphism风格' },
         { name: 'Figma 网页版', type: 'link', url: 'https://www.figma.com/', category: '设计神器', description: '在线UI设计协作' },
         { name: '品牌颜色库', type: 'link', url: 'https://brandcolors.net/', category: '设计神器', description: '知名品牌配色' },
-        // 文档处理 (8个)
         { name: 'SmallPDF 全能PDF', type: 'link', url: 'https://smallpdf.com/cn', category: '文档处理', description: 'PDF压缩/合并/转换' },
         { name: 'iLovePDF', type: 'link', url: 'https://www.ilovepdf.com/zh-cn', category: '文档处理', description: 'PDF万能工具箱' },
         { name: '腾讯文档', type: 'link', url: 'https://docs.qq.com/', category: '文档处理', description: '在线协作Office' },
@@ -263,7 +330,6 @@
         { name: '在线OCR 识别', type: 'link', url: 'https://ocr.space/', category: '文档处理', description: '图片转文字免费' },
         { name: 'Office Web', type: 'link', url: 'https://www.office.com/', category: '文档处理', description: '微软在线Office' },
         { name: 'PDF 合并拆分', type: 'link', url: 'https://www.sejda.com/', category: '文档处理', description: 'PDF编辑工具' },
-        // 在线转换 (8个)
         { name: 'CloudConvert', type: 'link', url: 'https://cloudconvert.com/', category: '在线转换', description: '200+格式转换' },
         { name: 'Convertio 万能转换', type: 'link', url: 'https://convertio.co/zh/', category: '在线转换', description: '音视频/文档/图像' },
         { name: 'OnlineConvert', type: 'link', url: 'https://www.onlineconvert.com/', category: '在线转换', description: '免费在线转换' },
@@ -272,7 +338,6 @@
         { name: '单位换算', type: 'link', url: 'https://www.convertworld.com/zh-hans/', category: '在线转换', description: '万能单位换算' },
         { name: '货币汇率转换', type: 'link', url: 'https://wise.com/zh-cn/currency-converter/', category: '在线转换', description: '实时汇率' },
         { name: '进制转换', type: 'link', url: 'https://tool.oschina.net/hexconvert/', category: '在线转换', description: '2/8/10/16进制' },
-        // 实用查询 (8个)
         { name: 'IP 地址查询', type: 'link', url: 'https://www.ip138.com/', category: '实用查询', description: 'IP归属地' },
         { name: '草料二维码', type: 'link', url: 'https://cli.im/', category: '实用查询', description: '二维码生成/解码' },
         { name: '在线计算器', type: 'link', url: 'https://web2.0calc.com/', category: '实用查询', description: '科学计算器' },
@@ -281,7 +346,6 @@
         { name: '快递查询', type: 'link', url: 'https://www.kuaidi100.com/', category: '实用查询', description: '快递单号追踪' },
         { name: '天气查询', type: 'link', url: 'https://weather.com/zh-CN/', category: '实用查询', description: '全球天气预报' },
         { name: '身份证查询', type: 'link', url: 'https://id.weixingmap.com/', category: '实用查询', description: '身份证归属地' },
-        // AI助手 (7个)
         { name: 'Kimi 智能助手', type: 'link', url: 'https://kimi.moonshot.cn/', category: 'AI助手', description: '长文本AI助手' },
         { name: '文心一言', type: 'link', url: 'https://yiyan.baidu.com/', category: 'AI助手', description: '百度大模型' },
         { name: '通义千问', type: 'link', url: 'https://tongyi.aliyun.com/', category: 'AI助手', description: '阿里大模型' },
@@ -289,7 +353,6 @@
         { name: 'Perplexity AI', type: 'link', url: 'https://www.perplexity.ai/', category: 'AI助手', description: '智能搜索引擎' },
         { name: 'Copy.ai 文案', type: 'link', url: 'https://www.copy.ai/', category: 'AI助手', description: 'AI写作助手' },
         { name: 'AI 绘画', type: 'link', url: 'https://www.liblib.art/', category: 'AI助手', description: '免费在线Stable Diffusion' },
-        // 图片工具 (12个)
         { name: 'TinyPNG 压缩', type: 'link', url: 'https://tinypng.com/', category: '图片工具', description: '智能压缩PNG/JPEG' },
         { name: 'Photopea 在线PS', type: 'link', url: 'https://www.photopea.com/', category: '图片工具', description: '网页版Photoshop' },
         { name: '图片加水印', type: 'link', url: 'https://www.watermark.ws/', category: '图片工具', description: '批量添加水印' },
@@ -302,7 +365,6 @@
         { name: '图片转素描', type: 'link', url: 'https://www.befunky.com/create/sketch-effect/', category: '图片工具', description: '照片转手绘' },
         { name: '在线图片压缩', type: 'link', url: 'https://www.iloveimg.com/zh-cn/compress-image', category: '图片工具', description: 'iLoveIMG压缩' },
         { name: '去除图片背景', type: 'link', url: 'https://www.bgremover.com/', category: '图片工具', description: '免费抠图工具' },
-        // 视频工具 (11个)
         { name: 'Clipchamp 剪辑', type: 'link', url: 'https://clipchamp.com/zh/', category: '视频工具', description: '微软官方在线剪辑' },
         { name: '视频压缩', type: 'link', url: 'https://www.youcompress.com/zh/', category: '视频工具', description: '压缩MP4/MOV' },
         { name: '视频格式转换', type: 'link', url: 'https://convertio.co/zh/video-converter/', category: '视频工具', description: 'MP4/AVI/MKV互转' },
@@ -314,7 +376,6 @@
         { name: '在线录屏', type: 'link', url: 'https://www.apowersoft.cn/free-online-screen-recorder', category: '视频工具', description: '屏幕录制' },
         { name: '视频转GIF', type: 'link', url: 'https://ezgif.com/video-to-gif', category: '视频工具', description: '视频片段转GIF' },
         { name: '视频倒放', type: 'link', url: 'https://online-video-cutter.com/reverse-video', category: '视频工具', description: '视频反向播放' },
-        // 音频工具 (10个)
         { name: '音频剪切/铃声', type: 'link', url: 'https://mp3cut.net/cn/', category: '音频工具', description: 'MP3剪切/淡入淡出' },
         { name: '音频格式转换', type: 'link', url: 'https://convertio.co/zh/audio-converter/', category: '音频工具', description: 'MP3/WAV/FLAC转换' },
         { name: '人声分离伴奏', type: 'link', url: 'https://vocalremover.org/ch/', category: '音频工具', description: 'AI分离人声和伴奏' },
@@ -339,20 +400,33 @@
         const toStore = tools.map(t => t.type === 'html' && t.blobContent ? { ...t, blobContent: t.blobContent } : t);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
         document.getElementById('toolCountBadge').innerText = tools.length;
+        // 同时更新toolOrder
+        const allIds = tools.map(t => t.id);
+        toolOrder = toolOrder.filter(id => allIds.includes(id));
+        const newIds = allIds.filter(id => !toolOrder.includes(id));
+        toolOrder = toolOrder.concat(newIds);
+        saveToolOrder();
     }
     function addLinkTool(name, url, category, desc) {
         if (!name.trim() || !url.trim()) { alert('请填写名称和链接'); return false; }
         let finalUrl = url.trim();
         if (!finalUrl.startsWith('http://') && !finalUrl.startsWith('https://')) finalUrl = 'https://' + finalUrl;
-        tools.unshift({ id: Date.now()+'-'+Math.random().toString(36).substr(2,6), name: name.trim(), type: 'link', url: finalUrl, category, description: desc.trim() || '点击访问', createdAt: Date.now() });
+        const newTool = { id: Date.now()+'-'+Math.random().toString(36).substr(2,6), name: name.trim(), type: 'link', url: finalUrl, category, description: desc.trim() || '点击访问', createdAt: Date.now() };
+        tools.unshift(newTool);
+        // 更新排序
+        toolOrder = [newTool.id, ...toolOrder];
+        saveToolOrder();
         saveTools(); renderAllUI(); return true;
     }
     function addHtmlTool(name, htmlContent, category, desc) {
         if (!name.trim()) { alert('请填写工具名称'); return false; }
-        tools.unshift({ id: Date.now()+'-'+Math.random().toString(36).substr(2,8), name: name.trim(), type: 'html', blobContent: htmlContent, category, description: desc.trim() || '自上传HTML工具', createdAt: Date.now() });
+        const newTool = { id: Date.now()+'-'+Math.random().toString(36).substr(2,8), name: name.trim(), type: 'html', blobContent: htmlContent, category, description: desc.trim() || '自上传HTML工具', createdAt: Date.now() };
+        tools.unshift(newTool);
+        toolOrder = [newTool.id, ...toolOrder];
+        saveToolOrder();
         saveTools(); renderAllUI(); return true;
     }
-    function deleteTool(id) { if (confirm('删除该工具？')) { tools = tools.filter(t => t.id != id); saveTools(); renderAllUI(); } }
+    function deleteTool(id) { if (confirm('删除该工具？')) { tools = tools.filter(t => t.id != id); toolOrder = toolOrder.filter(tid => tid !== id); saveToolOrder(); saveTools(); renderAllUI(); } }
     function updateTool(id, newName, newCategory, newDesc, newUrl, type) {
         const idx = tools.findIndex(t => t.id == id);
         if (idx === -1) return;
@@ -364,7 +438,10 @@
         } else { updated.type = 'html'; }
         tools[idx] = updated; saveTools(); renderAllUI();
     }
-    function getFilteredTools() { return currentCategory === 'all' ? [...tools] : tools.filter(t => t.category === currentCategory); }
+    function getFilteredTools() { 
+        const filtered = currentCategory === 'all' ? [...tools] : tools.filter(t => t.category === currentCategory);
+        return getOrderedTools(filtered);
+    }
     function renderToolsGrid() {
         const filtered = getFilteredTools();
         const grid = document.getElementById('toolsGrid');
@@ -372,15 +449,22 @@
         grid.innerHTML = '';
         filtered.forEach(tool => {
             const isHtml = tool.type === 'html';
-            const card = document.createElement('div'); card.className = 'tool-card';
+            const card = document.createElement('div'); card.className = 'tool-card'; card.setAttribute('draggable', 'true'); card.dataset.toolId = tool.id;
             card.innerHTML = `
-                <div class="tool-header"><span class="tool-cat-badge">${escapeHtml(tool.category)}</span><div class="tool-actions"><button class="edit-tool" data-id="${tool.id}">✏️</button><button class="del-tool" data-id="${tool.id}">🗑️</button></div></div>
-                <div class="tool-name">${escapeHtml(tool.name)}</div>
+                <div class="tool-header">
+                    <span class="tool-cat-badge">${escapeHtml(tool.category)}</span>
+                    <div class="tool-actions">
+                        <button class="edit-tool" data-id="${tool.id}">✏️</button>
+                        <button class="del-tool" data-id="${tool.id}">🗑️</button>
+                    </div>
+                </div>
+                <div class="tool-name"><span class="drag-tool-handle">⠿</span> ${escapeHtml(tool.name)}</div>
                 <div class="tool-desc">${escapeHtml(tool.description)}</div>
                 <div class="tool-link">${isHtml ? '<span>📁 HTML应用</span>' : `<a href="${escapeHtml(tool.url)}" target="_blank" rel="noopener">🔗 打开工具</a>`}<button class="copy-action" data-id="${tool.id}" data-type="${isHtml ? 'html' : 'link'}">${isHtml ? '▶️ 运行' : '📋 复制'}</button></div>
             `;
             grid.appendChild(card);
         });
+        // 事件绑定
         document.querySelectorAll('.del-tool').forEach(btn => btn.addEventListener('click', (e) => deleteTool(btn.getAttribute('data-id'))));
         document.querySelectorAll('.edit-tool').forEach(btn => btn.addEventListener('click', (e) => openEditModal(btn.getAttribute('data-id'))));
         document.querySelectorAll('.copy-action').forEach(btn => {
@@ -392,6 +476,72 @@
                 else if (tool.type === 'html' && tool.blobContent) { const url = URL.createObjectURL(new Blob([tool.blobContent], {type: 'text/html'})); window.open(url, '_blank'); setTimeout(() => URL.revokeObjectURL(url), 60000); }
                 e.stopPropagation();
             });
+        });
+
+        // ----- 工具卡片拖拽排序 -----
+        let dragSrcElement = null;
+        const cards = grid.querySelectorAll('.tool-card');
+        const handleDragStart = (e) => {
+            const el = e.target.closest('.tool-card');
+            if (!el) return;
+            dragSrcElement = el;
+            el.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', el.dataset.toolId);
+        };
+        const handleDragOver = (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            const target = e.target.closest('.tool-card');
+            if (target && target !== dragSrcElement) {
+                target.classList.add('drag-over');
+            }
+        };
+        const handleDragLeave = (e) => {
+            const target = e.target.closest('.tool-card');
+            if (target) target.classList.remove('drag-over');
+        };
+        const handleDrop = (e) => {
+            e.preventDefault();
+            const target = e.target.closest('.tool-card');
+            if (!target || !dragSrcElement || target === dragSrcElement) {
+                if (target) target.classList.remove('drag-over');
+                return;
+            }
+            target.classList.remove('drag-over');
+            const dragId = dragSrcElement.dataset.toolId;
+            const dropId = target.dataset.toolId;
+            if (!dragId || !dropId) return;
+            // 重新排序 toolOrder
+            const dragIndex = toolOrder.indexOf(dragId);
+            const dropIndex = toolOrder.indexOf(dropId);
+            if (dragIndex === -1 || dropIndex === -1) return;
+            toolOrder.splice(dragIndex, 1);
+            const newDropIndex = toolOrder.indexOf(dropId);
+            if (newDropIndex === -1) {
+                toolOrder.push(dragId);
+            } else {
+                toolOrder.splice(newDropIndex, 0, dragId);
+            }
+            saveToolOrder();
+            renderAllUI(); // 重新渲染
+            dragSrcElement = null;
+        };
+        const handleDragEnd = (e) => {
+            const el = e.target.closest('.tool-card');
+            if (el) {
+                el.classList.remove('dragging');
+                el.classList.remove('drag-over');
+            }
+            document.querySelectorAll('.tool-card.drag-over').forEach(c => c.classList.remove('drag-over'));
+            dragSrcElement = null;
+        };
+        cards.forEach(card => {
+            card.addEventListener('dragstart', handleDragStart);
+            card.addEventListener('dragover', handleDragOver);
+            card.addEventListener('dragleave', handleDragLeave);
+            card.addEventListener('drop', handleDrop);
+            card.addEventListener('dragend', handleDragEnd);
         });
     }
     function renderQuickCats() {
@@ -455,11 +605,20 @@
     fileInput.onchange=e=>{ if(e.target.files.length) handleHtmlFile(e.target.files[0]); fileInput.value=''; };
     function handleHtmlFile(file){ const reader=new FileReader(); reader.onload=ev=>{ const name=document.getElementById('htmlToolName').value.trim()||file.name.replace(/\.html$/i,''), cat=document.getElementById('htmlCategorySelect').value, desc=document.getElementById('htmlDesc').value; if(addHtmlTool(name,ev.target.result,cat,desc)){ document.getElementById('htmlToolName').value=''; document.getElementById('htmlDesc').value=''; alert(`HTML工具“${name}”添加成功`); } }; reader.readAsText(file); }
     document.getElementById('uploadHtmlBtn').onclick=()=>{ if(fileInput.files.length) handleHtmlFile(fileInput.files[0]); else alert('请选择文件'); };
-    document.getElementById('exportDataBtn').onclick=()=>{ const data={ tools, categoryOrder, customCategories }; const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='toolbox_backup.json'; a.click(); URL.revokeObjectURL(a.href); };
-    document.getElementById('importFile').onchange=e=>{ const file=e.target.files[0]; if(!file)return; const reader=new FileReader(); reader.onload=ev=>{ try{ const imp=JSON.parse(ev.target.result); if(imp.tools){ tools=imp.tools; if(imp.categoryOrder) categoryOrder=imp.categoryOrder; if(imp.customCategories) customCategories=imp.customCategories; saveCategoryOrder(); saveCustomToLocal(); saveTools(); renderAllUI(); alert('导入成功'); } else alert('格式错误'); } catch(e){ alert('解析失败'); } }; reader.readAsText(file); e.target.value=''; };
+    document.getElementById('exportDataBtn').onclick=()=>{ const data={ tools, categoryOrder, customCategories, toolOrder }; const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='toolbox_backup.json'; a.click(); URL.revokeObjectURL(a.href); };
+    document.getElementById('importFile').onchange=e=>{ const file=e.target.files[0]; if(!file)return; const reader=new FileReader(); reader.onload=ev=>{ try{ const imp=JSON.parse(ev.target.result); if(imp.tools){ tools=imp.tools; if(imp.categoryOrder) categoryOrder=imp.categoryOrder; if(imp.customCategories) customCategories=imp.customCategories; if(imp.toolOrder) toolOrder=imp.toolOrder; else toolOrder=[]; saveCategoryOrder(); saveCustomToLocal(); saveToolOrder(); saveTools(); renderAllUI(); alert('导入成功'); } else alert('格式错误'); } catch(e){ alert('解析失败'); } }; reader.readAsText(file); e.target.value=''; };
     document.getElementById('resetAllCategoryBtn').onclick=()=>{ currentCategory='all'; renderAllUI(); };
     function escapeHtml(str){ if(!str) return ''; return str.replace(/[&<>]/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m])); }
-    loadCustomCategories(); initTools(); renderAllUI();
+    loadCustomCategories(); 
+    loadToolOrder(); 
+    initTools(); 
+    // 确保toolOrder包含所有工具
+    const allIds = tools.map(t => t.id);
+    toolOrder = toolOrder.filter(id => allIds.includes(id));
+    const newIds = allIds.filter(id => !toolOrder.includes(id));
+    toolOrder = toolOrder.concat(newIds);
+    saveToolOrder();
+    renderAllUI();
 </script>
 </body>
 </html>
